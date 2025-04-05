@@ -6,6 +6,11 @@ import cv2
 from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QComboBox, QVBoxLayout, QHBoxLayout, QWidget, QFileDialog
 from PyQt6.QtGui import QAction, QIcon, QPixmap, QImage
 from PyQt6.QtCore import Qt, QDate
+from datetime import datetime
+
+from weather import get_weather_data
+from models import predict_load, predict_generation
+from process_data import process_data_load, process_data_generation, is_solar
 
 class PowerSystemGUI(QMainWindow):
     def __init__(self):
@@ -59,6 +64,17 @@ class PowerSystemGUI(QMainWindow):
         self.run_button.clicked.connect(self.run_optimization)
         self.main_layout.addWidget(self.run_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
+
+        # Selected Model
+        self.selected_model = None
+        self.date = None
+        self.hour = None
+
+        # Results
+        self.load_prediction = None
+        self.gen_prediction_solar = None
+        self.gen_prediction_wind = None
+
     def process_background_image(self, image_path):
         """Loads, blurs, and stores the background image."""
         if os.path.exists(image_path):
@@ -104,7 +120,7 @@ class PowerSystemGUI(QMainWindow):
         forecast_layout.addWidget(forecast_label)
 
         self.model_buttons = {}
-        models = ["Regression", "xGBoost", "Neural Net"]
+        models = ["Random Forest", "xGBoost", "Neural Net"]
         for model in models:
             btn = QPushButton(model)
             btn.setCheckable(True)
@@ -122,9 +138,17 @@ class PowerSystemGUI(QMainWindow):
                 button.setChecked(True)
                 button.setStyleSheet("background-color: green; color: white; padding: 5px; font-weight: bold;")
                 self.status_bar.showMessage(f"{model} Model Selected")
+                self.selected_model = model  # Store the selected model
             else:
                 button.setChecked(False)
                 button.setStyleSheet("background-color: lightgray; padding: 5px;")
+    
+    def get_selected_date(self):
+        selected_date = self.date_dropdown.currentText()
+        selected_hour = self.hour_dropdown.currentText()
+        self.date = selected_date
+        self.hour = selected_hour
+        return self.date
 
     def create_datetime_dropdowns(self):
         """Creates date and hour selection dropdowns."""
@@ -156,8 +180,9 @@ class PowerSystemGUI(QMainWindow):
     def populate_date_dropdown(self):
         """Populates date dropdown with the next 7 days."""
         today = QDate.currentDate()
-        for i in range(1, 8):
+        for i in range(0, 7):
             self.date_dropdown.addItem(today.addDays(i).toString("yyyy-MM-dd"))
+
 
     def reset_gui(self):
         """Resets GUI to default state."""
@@ -181,14 +206,40 @@ class PowerSystemGUI(QMainWindow):
         else:
             self.status_bar.showMessage("User Manual not found!")
 
+    def run_forecast(self):
+        """Runs the forecast script."""
+        self.get_selected_date()
+        # data = process_data(self.date, self.hour)
+        date = datetime.strptime(f"{self.date} {self.hour}", "%Y-%m-%d %H")
+        load_data = process_data_load(date)
+        generation_data = process_data_generation(date)
+
+
+        if self.selected_model == "Random Forest":
+            self.load_prediction = predict_load("load_random_forsest", load_data)
+            self.gen_prediction_wind = predict_generation("gen_random_forsest", generation_data)
+            self.gen_prediction_solar = predict_generation("gen_random_forsest", is_solar(generation_data))
+        elif self.selected_model == "xGBoost":
+            self.load_prediction = predict_load("load_xgboost", load_data)
+            self.gen_prediction_wind = predict_generation("gen_xgboost", generation_data)
+            self.gen_prediction_solar = predict_generation("gen_xgboost", is_solar(generation_data))
+        elif self.selected_model == "Neural Net":
+            self.load_prediction = predict_load("load_neural_network", load_data)
+            self.gen_prediction_wind = predict_generation("gen_neural_network", generation_data)
+            self.gen_prediction_solar = predict_generation("gen_neural_network", is_solar(generation_data))
+
+        self.status_bar.showMessage(f"Forecasting Completed {self.gen_prediction_solar} {self.gen_prediction_wind} {self.load_prediction}")
+
+
     def run_optimization(self):
         """Runs the optimization script."""
-        script_path = os.path.abspath("generate_sld.py")
-        if os.path.exists(script_path):
-            subprocess.Popen([sys.executable, script_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.status_bar.showMessage("Running SLD Optimization...")
-        else:
-            self.status_bar.showMessage("SLD script not found!")
+        self.run_forecast()
+        # script_path = os.path.abspath("generate_sld.py")
+        # if os.path.exists(script_path):
+        #     subprocess.Popen([sys.executable, script_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        #     self.status_bar.showMessage("Running SLD Optimization...")
+        # else:
+        #     self.status_bar.showMessage("SLD script not found!")
 
     def update_status(self):
         self.status_bar.showMessage("Running Updated Version")
@@ -197,6 +248,8 @@ class PowerSystemGUI(QMainWindow):
         QApplication.quit()
 
 if __name__ == "__main__":
+    # Download weather data
+    get_weather_data()
     app = QApplication(sys.argv)
     window = PowerSystemGUI()
     window.show()
